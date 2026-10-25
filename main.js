@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Cinema Popup Blocker
 // @namespace    http://tampermonkey.net/
-// @version      1.1
-// @description  Block window.open / target=_blank and show blocker status
+// @version      1.2
+// @description  Block popups and banner ads, and show blocker status
 // @include      /^https:\/\/(www\.)?(motchill\w*|phimmoi\w*|phimnhua)\.[a-z.]+\//
 // @run-at       document-start
 // @sandbox      raw
@@ -407,6 +407,90 @@
     },
     true
   );
+
+  // =========================================================
+  // Remove banners
+  //
+  // motchill / phimmoi (Next.js): banner slots are .ads-banner,
+  // every ad link has rel="sponsored", and the popup ad sits in
+  // a full-screen .fixed.inset-0 overlay. The site also adds a
+  // floating "hide all ads" button. React owns these
+  // nodes: removing them crashes the app ("Application error"),
+  // so they are only hidden with CSS.
+  //
+  // phimnhua (not React): ad network slots have ids starting
+  // with __clb-, the top ad zone (.topless) keeps a min-height,
+  // and there is a Telegram promo overlay. These are hidden and
+  // also removed, which stops the ad iframes.
+  // =========================================================
+
+  const HIDDEN_SELECTOR = [
+    '.ads-banner',
+    'a[rel~="sponsored"]',
+    '.fixed.inset-0:has(a[rel~="sponsored"])',
+    // The site's own floating "Tắt quảng cáo" button.
+    '.fixed:has(> button[aria-label="Button handle hide all ads"])',
+  ].join(',');
+
+  const REMOVED_SELECTOR = [
+    '.topless:has(.topzonea)',
+    '[id^="__clb-"]',
+    '#telegram-popup-overlay',
+  ].join(',');
+
+  function createBannerStyle() {
+    // May not exist yet at document-start.
+    if (!document.documentElement) {
+      requestAnimationFrame(createBannerStyle);
+      return;
+    }
+
+    const style = document.createElement('style');
+
+    style.id = `${BADGE_ID}-banner-style`;
+
+    style.textContent = `
+            ${HIDDEN_SELECTOR},
+            ${REMOVED_SELECTOR} {
+                display: none !important;
+            }
+        `;
+
+    document.documentElement.appendChild(style);
+  }
+
+  function removeBanners() {
+    for (const banner of document.querySelectorAll(
+      REMOVED_SELECTOR
+    )) {
+      banner.remove();
+    }
+  }
+
+  function watchBanners() {
+    let scheduled = false;
+
+    new MutationObserver(function () {
+      if (scheduled) {
+        return;
+      }
+
+      scheduled = true;
+
+      requestAnimationFrame(function () {
+        scheduled = false;
+        removeBanners();
+      });
+    }).observe(
+      document.documentElement,
+      {
+        childList: true,
+        subtree: true,
+      }
+    );
+
+    removeBanners();
+  }
 
   // =========================================================
   // Badge
@@ -944,19 +1028,25 @@
   // =========================================================
 
   if (window.top === window) {
+    createBannerStyle();
+
     if (
       document.readyState ===
       'loading'
     ) {
       document.addEventListener(
         'DOMContentLoaded',
-        createBadge,
+        function () {
+          createBadge();
+          watchBanners();
+        },
         {
           once: true,
         }
       );
     } else {
       createBadge();
+      watchBanners();
     }
   }
 

@@ -1,12 +1,13 @@
 # Cinema Popup Blocker
 
-Cinema Popup Blocker is a Tampermonkey userscript that prevents supported movie sites from opening unwanted popup windows or new tabs.
+Cinema Popup Blocker is a Tampermonkey userscript that prevents supported movie sites from opening unwanted popup windows or new tabs, and hides their banner ads.
 
 ## Features
 
 - Blocks calls to `window.open`, including calls made through an iframe's window.
 - Blocks clicks on links with `target="_blank"`, including scripted `link.click()` on links that are not in the page.
 - Blocks form submissions with `target="_blank"`, including `form.submit()`.
+- Hides banner ads, the popup ad overlay, and the Telegram promo overlay.
 - Shows a small status badge with the number of blocked popups.
 - Keeps the blocked count for the current browser session.
 - Lets you drag the status badge and remembers its position.
