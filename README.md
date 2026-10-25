@@ -4,9 +4,9 @@ Cinema Popup Blocker is a Tampermonkey userscript that prevents supported movie 
 
 ## Features
 
-- Blocks calls to `window.open`.
-- Blocks clicks on links with `target="_blank"`.
-- Blocks form submissions with `target="_blank"`.
+- Blocks calls to `window.open`, including calls made through an iframe's window.
+- Blocks clicks on links with `target="_blank"`, including scripted `link.click()` on links that are not in the page.
+- Blocks form submissions with `target="_blank"`, including `form.submit()`.
 - Shows a small status badge with the number of blocked popups.
 - Keeps the blocked count for the current browser session.
 - Lets you drag the status badge and remembers its position.
@@ -14,12 +14,13 @@ Cinema Popup Blocker is a Tampermonkey userscript that prevents supported movie 
 
 ## Supported Sites
 
-The script currently runs on:
+These sites change domains often, so the script matches by name instead of exact domain. It runs on any `https://` site whose domain starts with `motchill`, `phimmoi` or `phimnhua`, for example:
 
-- `motchillu.app`
+- `motchillu.mx` (also reached from `motchillu.app` and `motchillm.fm`)
+- `phimmoic.com.mx` (also reached from `phimmoic.mx`)
 - `phimnhua.online`
-- `motchillm.fm`
-- `phimmoic.mx`
+
+To add a site, edit the `@include` regex in the userscript header.
 
 ## Installation
 
@@ -45,4 +46,4 @@ The counter is stored in session storage, so it normally resets when the browser
 
 ## Notes
 
-The script only targets the domains listed in its userscript metadata. It does not block every possible redirect or popup technique used by websites.
+The script only targets the domains matched by the `@include` rule in its userscript metadata. It does not block every possible redirect or popup technique used by websites.

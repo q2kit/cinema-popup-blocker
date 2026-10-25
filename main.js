@@ -1,12 +1,9 @@
 // ==UserScript==
 // @name         Cinema Popup Blocker
 // @namespace    http://tampermonkey.net/
-// @version      1.0
+// @version      1.1
 // @description  Block window.open / target=_blank and show blocker status
-// @match        https://motchillu.app/*
-// @match        https://phimnhua.online/*
-// @match        https://motchillm.fm/*
-// @match        https://phimmoic.mx/*
+// @include      /^https:\/\/(www\.)?(motchill\w*|phimmoi\w*|phimnhua)\.[a-z.]+\//
 // @run-at       document-start
 // @sandbox      raw
 // @grant        none
@@ -90,9 +87,88 @@
   }
 
   // =========================================================
-  // Block window.open
+  // Helpers
   //
-  // Install immediately at document-start.
+  // Elements may come from another window (e.g. an about:blank
+  // iframe), so avoid instanceof checks against this window.
+  // =========================================================
+
+  // Every function installed by the blocker, so a window that
+  // is already patched can be recognized.
+  const blockerFunctions = new WeakSet();
+
+  function lockProperty(object, name, value) {
+    blockerFunctions.add(value);
+
+    Object.defineProperty(
+      object,
+      name,
+      {
+        value,
+        writable: false,
+        configurable: false,
+      }
+    );
+  }
+
+  function hasBlankTarget(element) {
+    const target = element
+      .getAttribute('target')
+      ?.trim()
+      .toLowerCase();
+
+    return target === '_blank';
+  }
+
+  function findBlankLink(node) {
+    const link = node?.closest?.('a');
+
+    if (!link || !hasBlankTarget(link)) {
+      return null;
+    }
+
+    return link;
+  }
+
+  // =========================================================
+  // Patch a window
+  //
+  // Applied to the page at document-start, and to every
+  // same-origin iframe window the page gets hold of, because
+  // each iframe has its own unpatched window.open and
+  // prototypes.
+  // =========================================================
+
+  function patchWindow(win) {
+    try {
+      if (blockerFunctions.has(win.open)) {
+        return;
+      }
+    } catch {
+      // Cross-origin window: nothing to patch.
+      return;
+    }
+
+    patchWindowOpen(win);
+
+    for (const patch of [
+      patchLinkClick,
+      patchFormSubmit,
+      patchFrameAccess,
+    ]) {
+      try {
+        patch(win);
+      } catch (error) {
+        console.warn(
+          `[CPB] ${patch.name} failed`,
+          error
+        );
+      }
+    }
+  }
+
+  // =========================================================
+  // Block window.open
   // =========================================================
 
   const blockedWindowOpen = function (...args) {
@@ -104,20 +180,18 @@
     return null;
   };
 
-  function installWindowOpenBlocker() {
+  blockerFunctions.add(blockedWindowOpen);
+
+  function patchWindowOpen(win) {
     try {
-      Object.defineProperty(
-        window,
+      lockProperty(
+        win,
         'open',
-        {
-          value: blockedWindowOpen,
-          writable: false,
-          configurable: false,
-        }
+        blockedWindowOpen
       );
     } catch (error) {
       try {
-        window.open = blockedWindowOpen;
+        win.open = blockedWindowOpen;
       } catch (fallbackError) {
         console.warn(
           '[CPB] Failed to block window.open',
@@ -128,31 +202,157 @@
     }
   }
 
-  installWindowOpenBlocker();
+  // =========================================================
+  // Block scripted clicks on <a target="_blank">
+  //
+  // Popunders create a link that is never added to the page
+  // and call link.click(). The click event of a detached
+  // element never reaches the document listeners below.
+  // =========================================================
+
+  function patchLinkClick(win) {
+    const elementProto = win.HTMLElement.prototype;
+    const nativeClick = elementProto.click;
+
+    lockProperty(
+      elementProto,
+      'click',
+      function () {
+        const link = findBlankLink(this);
+
+        if (link) {
+          increaseBlocked(
+            'link.click()',
+            link.href
+          );
+
+          return;
+        }
+
+        return nativeClick.apply(this, arguments);
+      }
+    );
+
+    const eventProto = win.EventTarget.prototype;
+    const nativeDispatch = eventProto.dispatchEvent;
+
+    lockProperty(
+      eventProto,
+      'dispatchEvent',
+      function (event) {
+        const link =
+          event?.type === 'click' &&
+          findBlankLink(this);
+
+        if (link) {
+          increaseBlocked(
+            'link.dispatchEvent(click)',
+            link.href
+          );
+
+          return false;
+        }
+
+        return nativeDispatch.apply(this, arguments);
+      }
+    );
+  }
 
   // =========================================================
-  // Block <a target="_blank">
+  // Block form.submit() on <form target="_blank">
+  //
+  // form.submit() does not fire a submit event.
+  // =========================================================
+
+  function patchFormSubmit(win) {
+    const formProto = win.HTMLFormElement.prototype;
+    const nativeSubmit = formProto.submit;
+
+    lockProperty(
+      formProto,
+      'submit',
+      function () {
+        if (hasBlankTarget(this)) {
+          increaseBlocked(
+            'form.submit()',
+            this.action
+          );
+
+          return;
+        }
+
+        return nativeSubmit.apply(this, arguments);
+      }
+    );
+  }
+
+  // =========================================================
+  // Patch iframe windows on access
+  //
+  // Popunders create an about:blank iframe and call
+  // iframe.contentWindow.open(). Patch the iframe window
+  // before handing it out.
+  // =========================================================
+
+  function patchFrameAccess(win) {
+    const frameProto = win.HTMLIFrameElement.prototype;
+
+    const windowGetter = Object.getOwnPropertyDescriptor(
+      frameProto,
+      'contentWindow'
+    ).get;
+
+    const documentGetter = Object.getOwnPropertyDescriptor(
+      frameProto,
+      'contentDocument'
+    ).get;
+
+    Object.defineProperty(
+      frameProto,
+      'contentWindow',
+      {
+        get() {
+          const frameWindow = windowGetter.call(this);
+
+          if (frameWindow) {
+            patchWindow(frameWindow);
+          }
+
+          return frameWindow;
+        },
+        configurable: false,
+      }
+    );
+
+    Object.defineProperty(
+      frameProto,
+      'contentDocument',
+      {
+        get() {
+          const frameDocument = documentGetter.call(this);
+
+          if (frameDocument?.defaultView) {
+            patchWindow(frameDocument.defaultView);
+          }
+
+          return frameDocument;
+        },
+        configurable: false,
+      }
+    );
+  }
+
+  // Install immediately at document-start.
+  patchWindow(window);
+
+  // =========================================================
+  // Block clicks on <a target="_blank">
   // =========================================================
 
   function handleBlankLink(event) {
-    const target = event.target;
-
-    if (!(target instanceof Element)) {
-      return;
-    }
-
-    const link = target.closest('a');
+    const link = findBlankLink(event.target);
 
     if (!link) {
-      return;
-    }
-
-    const targetAttr = link
-      .getAttribute('target')
-      ?.trim()
-      .toLowerCase();
-
-    if (targetAttr !== '_blank') {
       return;
     }
 
@@ -189,16 +389,10 @@
     function (event) {
       const form = event.target;
 
-      if (!(form instanceof HTMLFormElement)) {
-        return;
-      }
-
-      const target = form
-        .getAttribute('target')
-        ?.trim()
-        .toLowerCase();
-
-      if (target !== '_blank') {
+      if (
+        !(form instanceof HTMLFormElement) ||
+        !hasBlankTarget(form)
+      ) {
         return;
       }
 
